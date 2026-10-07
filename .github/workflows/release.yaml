@@ -2,7 +2,7 @@ name: Build & Publish
 
 on:
   push:
-    branches: [main, fix/npm-pulish]
+    branches: [main, fix/npm-pulish, "feat/**", "ci/**"]
     tags:
       - "v*"
   pull_request:
@@ -301,11 +301,59 @@ jobs:
           # Copy the built binary into the platform npm package directory
           cp "c-lib-${{ matrix.target }}.${{ matrix.ext }}" "packages/${{ matrix.npm_package }}/${{ matrix.lib_filename }}"
 
+      - name: Package C developer bundle (.a, .h, .pc)
+        shell: bash
+        run: |
+          TARGET="${{ matrix.target }}"
+          EXT="${{ matrix.ext }}"
+          DIST_DIR="fff-c-$TARGET"
+          mkdir -p "$DIST_DIR/include" "$DIST_DIR/lib/pkgconfig"
+
+          # 1. Copy C header
+          cp crates/fff-c/include/fff.h "$DIST_DIR/include/"
+
+          # 2. Copy dynamic library
+          if [ -f "c-lib-$TARGET.$EXT" ]; then
+            cp "c-lib-$TARGET.$EXT" "$DIST_DIR/lib/${{ matrix.lib_filename }}"
+          fi
+
+          # 3. Copy static library if present
+          BUILD_DIR="$(dirname "${{ matrix.artifact_name }}")"
+          if [ -f "$BUILD_DIR/libfff_c.a" ]; then
+            cp "$BUILD_DIR/libfff_c.a" "$DIST_DIR/lib/"
+          elif [ -f "$BUILD_DIR/fff_c.lib" ]; then
+            cp "$BUILD_DIR/fff_c.lib" "$DIST_DIR/lib/"
+          fi
+
+          # 4. Generate relocatable pkg-config file
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/fff-c/Cargo.toml | head -n 1)
+          cat << EOF > "$DIST_DIR/lib/pkgconfig/fff_c.pc"
+          prefix=\${pcfiledir}/../..
+          exec_prefix=\${prefix}
+          libdir=\${exec_prefix}/lib
+          includedir=\${prefix}/include
+
+          Name: fff_c
+          Description: C API for the fff file search engine
+          Version: $VERSION
+          Libs: -L\${libdir} -lfff_c
+          Libs.private: -lpthread -ldl -lm
+          Cflags: -I\${includedir}
+          EOF
+
+          # 5. Archive package
+          tar -czf "fff-c-$TARGET.tar.gz" "$DIST_DIR"
+          if [ "$EXT" = "dll" ]; then
+            7z a "fff-c-$TARGET.zip" "$DIST_DIR"
+          fi
+
       - name: Upload C library artifact
         uses: actions/upload-artifact@v4
         with:
           name: c-lib-${{ matrix.target }}
-          path: c-lib-${{ matrix.target }}.*
+          path: |
+            c-lib-${{ matrix.target }}.*
+            fff-c-${{ matrix.target }}.*
 
       - name: Upload npm package artifact
         uses: actions/upload-artifact@v4
@@ -633,6 +681,7 @@ jobs:
 
             ## C FFI Library (for Bun/Node/Python)
             - `c-lib-{target}.so` / `.dylib` / `.dll` - C FFI library
+            - `fff-c-{target}.tar.gz` (or `.zip` for Windows) - C SDK bundle (.a static lib, .h header, .pc pkg-config)
 
             ## MCP Server
             - `fff-mcp-{target}` - MCP server binary
