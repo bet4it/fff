@@ -166,6 +166,7 @@ jobs:
     permissions:
       contents: read
     strategy:
+      fail-fast: false
       matrix:
         include:
           ## Linux builds
@@ -317,16 +318,28 @@ jobs:
             cp "c-lib-$TARGET.$EXT" "$DIST_DIR/lib/${{ matrix.lib_filename }}"
           fi
 
-          # 3. Copy static library if present
+          # 3. Copy static library and import library if present
           BUILD_DIR="$(dirname "${{ matrix.artifact_name }}")"
           if [ -f "$BUILD_DIR/libfff_c.a" ]; then
             cp "$BUILD_DIR/libfff_c.a" "$DIST_DIR/lib/"
           elif [ -f "$BUILD_DIR/fff_c.lib" ]; then
             cp "$BUILD_DIR/fff_c.lib" "$DIST_DIR/lib/"
           fi
+          if [ -f "$BUILD_DIR/fff_c.dll.lib" ]; then
+            cp "$BUILD_DIR/fff_c.dll.lib" "$DIST_DIR/lib/"
+          fi
 
           # 4. Generate relocatable pkg-config file
           VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/fff-c/Cargo.toml | head -n 1)
+          LIBS_PRIVATE="-lpthread -ldl -lm -lz"
+          case "$TARGET" in
+            *darwin*)
+              LIBS_PRIVATE="-lpthread -ldl -lm -lz -liconv -framework CoreServices -framework CoreFoundation -framework Security -framework SystemConfiguration"
+              ;;
+            *windows*)
+              LIBS_PRIVATE="-luserenv -lws2_32 -lbcrypt -lntdll -ladvapi32 -lsynchronization -lsecur32 -lshell32 -lole32"
+              ;;
+          esac
           cat << EOF > "$DIST_DIR/lib/pkgconfig/fff_c.pc"
           prefix=\${pcfiledir}/../..
           exec_prefix=\${prefix}
@@ -337,7 +350,7 @@ jobs:
           Description: C API for the fff file search engine
           Version: $VERSION
           Libs: -L\${libdir} -lfff_c
-          Libs.private: -lpthread -ldl -lm
+          Libs.private: $LIBS_PRIVATE
           Cflags: -I\${includedir}
           EOF
 
@@ -346,6 +359,11 @@ jobs:
           if [ "$EXT" = "dll" ]; then
             7z a "fff-c-$TARGET.zip" "$DIST_DIR"
           fi
+
+      - name: Verify C developer bundle with demo (static and dynamic)
+        shell: bash
+        run: |
+          ./scripts/test-c-bundle.sh "${{ matrix.target }}"
 
       - name: Upload C library artifact
         uses: actions/upload-artifact@v4
