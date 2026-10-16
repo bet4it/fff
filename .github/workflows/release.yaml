@@ -387,6 +387,11 @@ jobs:
             7z a "fff-c-$TARGET.zip" "$DIST_DIR"
           fi
 
+      - name: Verify C developer bundle with demo (static and dynamic)
+        shell: bash
+        run: |
+          ./scripts/test-c-bundle.sh "${{ matrix.target }}"
+
       - name: Upload C library artifact
         uses: actions/upload-artifact@v4
         with:
